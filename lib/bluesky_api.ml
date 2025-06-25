@@ -19,34 +19,63 @@ module Auth = struct
       |> Yojson.Safe.to_string
     in
     
-    let xhr = XmlHttpRequest.create () in
-    xhr##_open (Js.string "POST") (Js.string url) Js._true;
-    xhr##setRequestHeader (Js.string "Content-Type") (Js.string "application/json");
+    let headers = Js.Unsafe.obj [|
+      ("Content-Type", Js.Unsafe.inject (Js.string "application/json"))
+    |] in
     
-    xhr##.onreadystatechange := Js.wrap_callback (fun _ ->
-      if phys_equal xhr##.readyState XmlHttpRequest.DONE then
-        let status = xhr##.status in
-        let response_text = Js.Opt.get xhr##.responseText (fun () -> Js.string "") |> Js.to_string in
+    let init = Js.Unsafe.obj [|
+      ("method", Js.Unsafe.inject (Js.string "POST"));
+      ("headers", Js.Unsafe.inject headers);
+      ("body", Js.Unsafe.inject (Js.string body))
+    |] in
+    
+    let promise = Js.Unsafe.global##fetch (Js.string url) init in
+    
+    let handle_response response =
+      let status = Js.Unsafe.get response "status" in
+      let text_promise = Js.Unsafe.meth_call response "text" [||] in
+      
+      let handle_text text =
+        let response_text = Js.to_string text in
         if status >= 200 && status < 300 then
-          match Yojson.Safe.from_string response_text with
-          | `Assoc fields ->
-            let get_string key =
-              match List.Assoc.find fields ~equal:String.equal key with
-              | Some (`String s) -> s
-              | _ -> failwith (sprintf "Expected string for %s" key)
-            in
-            on_result (Ok {
-              access_jwt = get_string "accessJwt";
-              refresh_jwt = get_string "refreshJwt";
-              handle = get_string "handle";
-              did = get_string "did";
-            })
-          | _ -> on_result (Error "Invalid response format")
+          try
+            match Yojson.Safe.from_string response_text with
+            | `Assoc fields ->
+              let get_string key =
+                match List.Assoc.find fields ~equal:String.equal key with
+                | Some (`String s) -> s
+                | _ -> failwith (sprintf "Expected string for %s" key)
+              in
+              on_result (Ok {
+                access_jwt = get_string "accessJwt";
+                refresh_jwt = get_string "refreshJwt";
+                handle = get_string "handle";
+                did = get_string "did";
+              })
+            | _ -> on_result (Error "Invalid response format")
+          with
+          | exn -> on_result (Error (sprintf "Parse error: %s" (Exn.to_string exn)))
         else
           on_result (Error (sprintf "Authentication failed: %s" response_text))
-    );
+      in
+      
+      ignore (Js.Unsafe.meth_call text_promise "then" [|
+        Js.Unsafe.inject (Js.wrap_callback handle_text)
+      |])
+    in
     
-    xhr##send (Js.some (Js.string body))
+    let handle_error _ =
+      on_result (Error "Network error")
+    in
+    
+    ignore (
+      Js.Unsafe.meth_call promise "then" [|
+        Js.Unsafe.inject (Js.wrap_callback handle_response)
+      |] |> fun promise ->
+      Js.Unsafe.meth_call promise "catch" [|
+        Js.Unsafe.inject (Js.wrap_callback handle_error)
+      |]
+    )
 end
 
 module Post = struct
@@ -68,20 +97,46 @@ module Post = struct
       |> Yojson.Safe.to_string
     in
     
-    let xhr = XmlHttpRequest.create () in
-    xhr##_open (Js.string "POST") (Js.string url) Js._true;
-    xhr##setRequestHeader (Js.string "Content-Type") (Js.string "application/json");
-    xhr##setRequestHeader (Js.string "Authorization") (Js.string (sprintf "Bearer %s" session.Auth.access_jwt));
+    let headers = Js.Unsafe.obj [|
+      ("Content-Type", Js.Unsafe.inject (Js.string "application/json"));
+      ("Authorization", Js.Unsafe.inject (Js.string (sprintf "Bearer %s" session.Auth.access_jwt)))
+    |] in
     
-    xhr##.onreadystatechange := Js.wrap_callback (fun _ ->
-      if phys_equal xhr##.readyState XmlHttpRequest.DONE then
-        let status = xhr##.status in
-        let response_text = Js.Opt.get xhr##.responseText (fun () -> Js.string "") |> Js.to_string in
+    let init = Js.Unsafe.obj [|
+      ("method", Js.Unsafe.inject (Js.string "POST"));
+      ("headers", Js.Unsafe.inject headers);
+      ("body", Js.Unsafe.inject (Js.string body))
+    |] in
+    
+    let promise = Js.Unsafe.global##fetch (Js.string url) init in
+    
+    let handle_response response =
+      let status = Js.Unsafe.get response "status" in
+      let text_promise = Js.Unsafe.meth_call response "text" [||] in
+      
+      let handle_text text =
+        let response_text = Js.to_string text in
         if status >= 200 && status < 300 then
           on_result (Ok response_text)
         else
           on_result (Error (sprintf "Post creation failed: %s" response_text))
-    );
+      in
+      
+      ignore (Js.Unsafe.meth_call text_promise "then" [|
+        Js.Unsafe.inject (Js.wrap_callback handle_text)
+      |])
+    in
     
-    xhr##send (Js.some (Js.string body))
+    let handle_error _ =
+      on_result (Error "Network error")
+    in
+    
+    ignore (
+      Js.Unsafe.meth_call promise "then" [|
+        Js.Unsafe.inject (Js.wrap_callback handle_response)
+      |] |> fun promise ->
+      Js.Unsafe.meth_call promise "catch" [|
+        Js.Unsafe.inject (Js.wrap_callback handle_error)
+      |]
+    )
 end
