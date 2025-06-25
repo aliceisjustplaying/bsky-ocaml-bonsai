@@ -7,6 +7,8 @@ A simple Bluesky client built with OCaml and Jane Street's Bonsai web framework.
 - Login with Bluesky handle and app password
 - Create posts
 - Built entirely in OCaml (including the web server!)
+- Clean event-driven architecture without polling
+- Direct callback integration with Bonsai's state management
 
 ## Prerequisites
 
@@ -27,9 +29,8 @@ dune build
 
 ## Running
 
-1. Start the OCaml web server from the project directory:
+1. Start the OCaml web server:
 ```bash
-cd bluesky-client
 ./_build/default/bin/server.exe
 # Or to use a different port:
 ./_build/default/bin/server.exe 3000
@@ -44,18 +45,29 @@ cd bluesky-client
 ## Project Structure
 
 ```
-bluesky-client/
+ocaml/
 ├── lib/
-│   ├── bluesky_api.ml    # Bluesky API client
+│   ├── bluesky_api.ml    # Bluesky API client with JavaScript interop
 │   ├── bluesky_api.mli   # API interface
-│   ├── app.ml            # Bonsai web app
-│   └── app.mli           # App interface
+│   ├── app.ml            # Bonsai web app with event-driven state management
+│   ├── app.mli           # App interface
+│   └── dune              # Library build configuration
 ├── bin/
-│   ├── main.ml          # Entry point for JS compilation
-│   └── server.ml        # OCaml web server
-├── index.html           # HTML host page
-└── dune-project         # Dune project configuration
+│   ├── main.ml           # Entry point for JS compilation
+│   ├── server.ml         # OCaml web server using Cohttp-async
+│   └── dune              # Executables build configuration
+├── test/                 # Test directory
+├── index.html            # HTML host page
+├── dune-project          # Dune project configuration
+└── bluesky_client.opam   # OPAM package file
 ```
+
+## Architecture Notes
+
+- The app uses Bonsai's state machine for managing UI state
+- API calls are handled through JavaScript interop using `js_of_ocaml`
+- Callbacks from JavaScript promises are integrated directly into Bonsai's effect system
+- No polling or global mutable state - all updates flow through the state machine
 
 ## Security Note
 
@@ -64,6 +76,7 @@ This is a demo application. In production:
 - Use HTTPS for all communications
 - Implement proper error handling and validation
 - Consider implementing token refresh logic
+- Add rate limiting and request validation
 
 ## License
 
