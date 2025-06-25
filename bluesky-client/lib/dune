@@ -1,0 +1,14 @@
+(library
+ (name bluesky_client_lib)
+ (public_name bluesky_client.lib)
+ (libraries
+  core
+  bonsai
+  bonsai.web
+  bonsai.web_ui_form
+  virtual_dom
+  yojson
+  js_of_ocaml
+  js_of_ocaml-lwt)
+ (preprocess
+  (pps ppx_jane js_of_ocaml-ppx bonsai.ppx_bonsai)))
