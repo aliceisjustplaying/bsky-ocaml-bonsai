@@ -1,12 +1,7 @@
 open! Core
 open! Bonsai_web
 open Bonsai.Let_syntax
-open! Js_of_ocaml
 module Form = Bonsai_web_ui_form
-
-(* Global mutable state for passing results from callbacks to Bonsai *)
-let pending_auth_result : (Bluesky_api.Auth.session, string) Result.t option ref = ref None
-let pending_post_result : (string, string) Result.t option ref = ref None
 
 module Model = struct
   type auth_state = 
@@ -19,15 +14,11 @@ module Model = struct
   type t = {
     auth_state: auth_state;
     post_status: string option;
-    checking_auth: bool;
-    checking_post: bool;
   } [@@deriving sexp, equal]
 
   let default = {
     auth_state = Not_logged_in;
     post_status = None;
-    checking_auth = false;
-    checking_post = false;
   }
 end
 
@@ -35,74 +26,39 @@ module Action = struct
   type t =
     | Login of { handle: string; app_password: string }
     | Post of string
-    | Update_auth_state of Model.auth_state
-    | Update_post_status of string option
-    | Check_pending_results
+    | Auth_response of (Bluesky_api.Auth.session, string) Result.t
+    | Post_response of (string, string) Result.t
   [@@deriving sexp]
 end
 
-let apply_action ~inject:_ ~schedule_event:_ model = function
+let apply_action ~inject ~schedule_event model = function
   | Action.Login { handle; app_password } ->
-    Firebug.console##log (Js.string "Login action triggered");
-    pending_auth_result := None;
+    (* Instead of polling, we directly inject the response when it arrives *)
     Bluesky_api.Auth.create_session ~handle ~app_password
-      ~on_result:(fun result ->
-        Firebug.console##log (Js.string "Got login result, storing in pending_auth_result");
-        pending_auth_result := Some result
-      );
-    { model with Model.auth_state = Model.Logging_in; checking_auth = true }
+      ~on_result:(fun result -> 
+        schedule_event (inject (Action.Auth_response result)));
+    { model with Model.auth_state = Model.Logging_in }
   
   | Action.Post text ->
     (match model.Model.auth_state with
     | Model.Logged_in session ->
-      pending_post_result := None;
       Bluesky_api.Post.create_post ~session ~text
-        ~on_result:(fun result ->
-          Firebug.console##log (Js.string "Got post result");
-          pending_post_result := Some result
-        );
-      { model with checking_post = true }
+        ~on_result:(fun result -> 
+          schedule_event (inject (Action.Post_response result)));
+      model
     | _ -> model)
     
-  | Action.Check_pending_results ->
-    Firebug.console##log (Js.string "Checking pending results...");
-    let model = 
-      if model.checking_auth then
-        match !pending_auth_result with
-        | Some (Ok session) ->
-          Firebug.console##log (Js.string "Found successful auth result!");
-          pending_auth_result := None;
-          { model with Model.auth_state = Model.Logged_in session; checking_auth = false }
-        | Some (Error msg) ->
-          Firebug.console##log (Js.string (sprintf "Found auth error: %s" msg));
-          pending_auth_result := None;
-          { model with Model.auth_state = Model.Error msg; checking_auth = false }
-        | None -> model
-      else model
-    in
-    let model = 
-      if model.checking_post then
-        match !pending_post_result with
-        | Some (Ok _) ->
-          Firebug.console##log (Js.string "Found successful post result!");
-          pending_post_result := None;
-          { model with Model.post_status = Some "Post created successfully!"; checking_post = false }
-        | Some (Error msg) ->
-          Firebug.console##log (Js.string (sprintf "Found post error: %s" msg));
-          pending_post_result := None;
-          { model with Model.post_status = Some (sprintf "Error: %s" msg); checking_post = false }
-        | None -> model
-      else model
-    in
-    model
+  | Action.Auth_response (Ok session) ->
+    { model with Model.auth_state = Model.Logged_in session }
     
-  | Action.Update_auth_state auth_state ->
-    Firebug.console##log (Js.string (sprintf "Updating auth state: %s" 
-      (Sexp.to_string (Model.sexp_of_auth_state auth_state))));
-    { model with Model.auth_state }
+  | Action.Auth_response (Error msg) ->
+    { model with Model.auth_state = Model.Error msg }
     
-  | Action.Update_post_status post_status ->
-    { model with Model.post_status }
+  | Action.Post_response (Ok _) ->
+    { model with Model.post_status = Some "Post created successfully!" }
+    
+  | Action.Post_response (Error msg) ->
+    { model with Model.post_status = Some (sprintf "Error: %s" msg) }
 
 let login_form inject =
   let%sub handle_form = Form.Elements.Textbox.string () in
@@ -164,20 +120,6 @@ let component =
       (module Action)
       ~default_model:Model.default
       ~apply_action
-  in
-  (* Set up periodic checking using Bonsai.Clock.every *)
-  let%sub () =
-    let%sub should_check = 
-      let%arr state = state in
-      state.checking_auth || state.checking_post
-    in
-    match%sub should_check with
-    | true ->
-      Bonsai.Clock.every
-        ~when_to_start_next_effect:`Every_multiple_of_period_non_blocking
-        (Time_ns.Span.of_ms 100.0)
-        (let%map inject = inject in inject Action.Check_pending_results)
-    | false -> Bonsai.const ()
   in
   let%sub login_form = login_form inject in
   let%sub post_form = post_form inject in
